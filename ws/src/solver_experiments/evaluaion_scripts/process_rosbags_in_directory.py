@@ -2,17 +2,19 @@ import os
 
 from load_rosbag import register_custom_message_types
 from rosbags.rosbag2.reader import Reader as Bagreader
-from rosbags.serde import deserialize_cdr
 import numpy as np
 
 
 def process_rosbags_in_directory(
     result_datas: list[dict], path: str, tag_parser_fun, process_rosbag_funs: list
 ):
-    register_custom_message_types()
+    typestore = register_custom_message_types()
     assert len(result_datas) == len(process_rosbag_funs)
     # Iterate over experiment directory
     for exp_folder in os.listdir(path):
+        experiment_path = os.path.join(path, exp_folder)
+        if not os.path.isdir(experiment_path):
+            continue
         # load failed attempts
         failed_file = None
         try:
@@ -25,7 +27,7 @@ def process_rosbags_in_directory(
         faild_exps = failed_file.readlines()
         failed_file.close()
         # Iterate over experiments in directory
-        for exp_bag in os.listdir(os.path.join(path, exp_folder)):
+        for exp_bag in os.listdir(experiment_path):
             failed = False
             if os.path.isfile(os.path.join(path, exp_folder, exp_bag)):
                 print("skipping meta data file")
@@ -48,6 +50,7 @@ def process_rosbags_in_directory(
                             "total_time": [],
                         },
                         "solve_time": {
+                            "solve_time": [],
                             "acados_solve_qp_time": [],
                             "acados_condensing_time": [],
                             "acados_interface_time": [],
@@ -67,7 +70,7 @@ def process_rosbags_in_directory(
                     bag_time_data["failed"] = failed
                     # iterate through messages
                     for connection, timestamp, rawdata in bag.messages():
-                        msg = deserialize_cdr(rawdata, connection.msgtype)
+                        msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
                         for topic in bag_time_data.keys():
                             if connection.topic.__contains__(topic):
                                 for topic_field in bag_time_data[topic].keys():

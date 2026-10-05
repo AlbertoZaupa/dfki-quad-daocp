@@ -5,7 +5,6 @@ import subprocess
 import threading
 import time
 from math import radians
-import platform
 import rclpy
 import rclpy.parameter
 import rosbag2_py
@@ -17,7 +16,6 @@ from interfaces.srv import ResetSimulation
 from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-import argparse
 
 
 class ExperimentPlayer(Node):
@@ -146,16 +144,13 @@ class SolverExperiments(Node):
         self.playback_subprocess = None
         self.failed_experiments = []
         self.controller_process = None
-        self.cpu_process = None
         self.joy_to_target_process = None
         self.leg_driver_process = None
+        self.simulator_process = None
         self.bag_recorder = rosbag2_py.Recorder()
         self.player = ExperimentPlayer()
         config_file = "mit_controller_sim_go2.yaml"
         pkg_controllers = get_package_share_directory("controllers")
-        self.cpu_params_file = os.path.join(
-            pkg_controllers, "config", "cpu_power_logging.yaml"
-        )
         self.controller_params_file = os.path.join(
             pkg_controllers, "config", config_file
         )
@@ -195,7 +190,8 @@ class SolverExperiments(Node):
 
     def robot_fell(self):
         return (
-            self.quad_state.pose.pose.position.z < 0.1
+            self.quad_state is None
+            or self.quad_state.pose.pose.position.z < 0.1
             # abad joint angle
             or abs(self.quad_state.joint_state.position[0]) > 0.785
             or abs(self.quad_state.joint_state.position[3]) > 0.785
@@ -213,7 +209,6 @@ class SolverExperiments(Node):
         record_options = rosbag2_py.RecordOptions()
         record_options.topics = [
             "/solve_time",
-            "/cpu_power_consumption",
             "/wbc_solve_time",
         ]
         self.recording_subprocess = threading.Thread(
@@ -221,38 +216,12 @@ class SolverExperiments(Node):
         )
         self.recording_subprocess.start()
 
-    # self.recording_subprocess = subprocess.Popen(
-    #     ['ros2', 'bag', 'record', '-o', str(bag_file), '/solve_time', '/cpu_power_consumption', '/wbc_solve_time'],
-    #     stdout=subprocess.DEVNULL,
-    #     stderr=subprocess.DEVNULL,
-    #     stdin=subprocess.DEVNULL
-    # )
-
     def stop_record_bag(self):
         self.bag_recorder.cancel()
         self.recording_subprocess.join()
         # if self.recording_subprocess is not None:
         #    self.recording_subprocess.terminate()
         #    self.recording_subprocess = None
-
-    def start_power_consumption_node(self):
-        if self.cpu_process is None:
-            self.cpu_process = subprocess.Popen(
-                [
-                    "ros2",
-                    "run",
-                    "controllers",
-                    "log_cpu_power",
-                    "--ros-args",
-                    "--params-file",
-                    self.cpu_params_file,
-                ]
-            )
-
-    def stop_power_consumption_node(self):
-        if self.cpu_process is not None:
-            self.cpu_process.terminate()
-            self.cpu_process = None
 
     def start_joy_node(self):
         if self.joy_to_target_process is None:
@@ -283,14 +252,27 @@ class SolverExperiments(Node):
 
     def start_leg_driver(self):
         if self.leg_driver_process is None:
-            self.joy_to_target_process = subprocess.Popen(
+            self.leg_driver_process = subprocess.Popen(
                 ["ros2", "launch", "drivers", "leg_driver_launch.py", "sim:=go2"],
+                preexec_fn=os.setsid,
             )
 
     def stop_leg_driver(self):
         if self.leg_driver_process is not None:
             os.killpg(os.getpgid(self.leg_driver_process.pid), signal.SIGKILL)
             self.leg_driver_process = None
+
+    def start_simulator(self):
+        if self.simulator_process is None:
+            self.simulator_process = subprocess.Popen(
+                ["ros2", "launch", "simulator", "simulator.launch.py", "sim:=go2"],
+                preexec_fn=os.setsid,
+            )
+
+    def stop_simulator(self):
+        if self.simulator_process is not None:
+            os.killpg(os.getpgid(self.simulator_process.pid), signal.SIGTERM)
+            self.simulator_process = None
 
     def run_controller(
         self,
@@ -303,8 +285,7 @@ class SolverExperiments(Node):
         solver_tolerance: float,
         gs_gait: str,
     ):
-        self.controller_process = subprocess.Popen(
-            [
+        controller_command = [
                 "ros2",
                 "run",
                 "controllers",
@@ -332,7 +313,9 @@ class SolverExperiments(Node):
                 "simple_gait_sequencer.gait:=" + gs_gait,
                 "-p",
                 "use_sim_time:=True",
-            ],
+            ]
+        self.controller_process = subprocess.Popen(
+            controller_command,
             # stdout=subprocess.PIPE,
             # shell=True,
             preexec_fn=os.setsid,
@@ -384,12 +367,12 @@ class SolverExperiments(Node):
         return
 
     def start_needed_nodes(self):
+        self.get_logger().info("---> Start simulator node")
+        self.start_simulator()
+        self.get_logger().info("<---")
         # self.get_logger().info("---> Start Joy node")
         # self.start_joy_node()
         # self.get_logger().info("<---")
-        self.get_logger().info("---> Start CPU node")
-        self.start_power_consumption_node()
-        self.get_logger().info("<---")
         self.get_logger().info("---> Start Leg driver node")
         self.start_leg_driver()
         self.get_logger().info("<---")
@@ -398,11 +381,11 @@ class SolverExperiments(Node):
         # self.get_logger().info("---> Stop Joy node")
         # self.stop_joy_node()
         # self.get_logger().info("<---")
-        self.get_logger().info("---> Stop CPU node")
-        self.stop_power_consumption_node()
-        self.get_logger().info("<---")
         self.get_logger().info("---> Stop Leg driver node")
         self.stop_leg_driver()
+        self.get_logger().info("<---")
+        self.get_logger().info("---> Stop simulator node")
+        self.stop_simulator()
         self.get_logger().info("<---")
 
     def run_experiment(
@@ -428,6 +411,7 @@ class SolverExperiments(Node):
         self.keep_pose_client.call(self.leg_driver_keep_pose_request)
         self.get_logger().info("<---")
         self.get_logger().info("---> Reset Simulation")
+        self.sim_reset_client.wait_for_service()
         self.reset_simulation()
         self.get_logger().info("<---")
         self.get_logger().info("---> Start controller")
@@ -445,6 +429,14 @@ class SolverExperiments(Node):
         self.get_logger().info("---> Sleep 7 secs")
         time.sleep(7)
         self.get_logger().info("<---")
+        if self.controller_process.poll() is not None:
+            return_code = self.controller_process.returncode
+            self.get_logger().error(
+                f"Controller exited during startup with code {return_code}; experiment failed"
+            )
+            self.failed_experiments.append(target_bag_file)
+            self.controller_process = None
+            return False
         self.get_logger().info("---> Record bag")
         self.start_record_bag(os.path.join(self.working_folder, target_bag_file))
         self.get_logger().info("<---")
@@ -456,7 +448,7 @@ class SolverExperiments(Node):
         while exp_run:
             time.sleep(0.5)
             self.get_logger().info("----check status-----")
-            if self.robot_fell():
+            if self.controller_process.poll() is not None or self.robot_fell():
                 self.get_logger().info("!!!!!!! ROBOT FELL !!!!!!!")
                 self.get_logger().info("---> Stop playout bag")
                 self.player.cancel_playout()
@@ -484,7 +476,7 @@ def main(args=None):
     
     solver_experiments_node = SolverExperiments("src/solver_experiments/results")
     solver_experiments_node.declare_parameter("mpc_prediction_horizon", 20)
-    solver_experiments_node.declare_parameter("test_preset", "")
+    solver_experiments_node.declare_parameter("test_preset", "mpc_fixed")
     
     # Main script
     def run_func():
@@ -623,112 +615,40 @@ def main(args=None):
         ],
     ]
 
-    mpc_solvers = [
-        "PARTIAL_CONDENSING_HPIPM",
-        "PARTIAL_CONDENSING_OSQP",
-        "FULL_CONDENSING_QPOASES",
-        "FULL_CONDENSING_DAQP",
-        "FULL_CONDENSING_HPIPM",
+    # Compare the sparse OCP solvers without partial condensing, and the dense
+    # solvers with full condensing. Keep the WBC and trajectories fixed.
+    horizon = solver_experiments_node.get_parameter("mpc_prediction_horizon").value
+    preset = solver_experiments_node.get_parameter("test_preset").value
+    experiment_cases = [
+        (experiment_stand, "stand_exp", "STAND"),
+        (experiment_trot, "trot_exp", "TROT"),
     ]
-    mpc_hpipm_modes = ["SPEED", "SPEED_ABS", "BALANCE", "ROBUST"]
-    mpc_osqp_linsys_modes = ["qdldl", "mkl pardiso"]
-    if platform.processor() == "aarch64":
-        mpc_osqp_linsys_modes = ["qdldl"]
-    mpc_condensed_sizes = range(solver_experiments_node.get_parameter("mpc_prediction_horizon").get_parameter_value().integer_value, 0, -1)
-    wbc_solvers = ["EiquadprogSolver", "ProxQPSolver", "QPOasesSolver", "HPIPMSolver"]
-    wbc_scenes = ["AccelerationSceneReducedTSID", "AccelerationSceneTSID"]
-    solver_tolerances = [
-        0.001,
-#        1e-06,
-#        1e-09
-    ]
-    max_trials = 3
+    if preset == "mpc_stand":
+        experiment_cases = experiment_cases[:1]
+    elif preset in ("mpc_trot", "mpc_horizon_sweep"):
+        experiment_cases = experiment_cases[1:]
+    elif preset != "mpc_fixed":
+        raise ValueError(f"Unknown benchmark preset: {preset}")
 
-    preset = solver_experiments_node.get_parameter("test_preset").get_parameter_value().string_value
-    
-    if preset == 'mpc':
-        wbc_solvers = [wbc_solvers[0]]
-        wbc_scenes = [wbc_scenes[0]]
-    elif preset == 'wbc':
-        mpc_solvers = [mpc_solvers[1]]
-        mpc_hpipm_modes = [mpc_hpipm_modes[0]]
-        mpc_osqp_linsys_modes = [mpc_osqp_linsys_modes[0]]
-        mpc_condensed_sizes = [mpc_condensed_sizes[0]]
-    elif preset == 'mpc_daqp':
-        wbc_solvers = [wbc_solvers[0]]
-        wbc_scenes = [wbc_scenes[0]]
-        mpc_solvers = ["FULL_CONDENSING_DAQP"]
-    elif preset == 'mpc_osqp':
-        wbc_solvers = [wbc_solvers[0]]
-        wbc_scenes = [wbc_scenes[0]]
-        mpc_solvers = ["PARTIAL_CONDENSING_OSQP"]
-        
-    for mpc_solver in mpc_solvers:
-        if not mpc_solver.__contains__("PARTIAL"):
-            mpc_condensed_sizes_f = [1]
-        else:
-            mpc_condensed_sizes_f = mpc_condensed_sizes
-        if not mpc_solver.__contains__("HPIPM"):
-            mpc_hpipm_modes_f = ["xxxxx"]
-        else:
-            mpc_hpipm_modes_f = mpc_hpipm_modes
-        if not mpc_solver.__contains__("OSQP"):
-            mpc_osqp_linsys_modes_f = ["xxxxx"]
-        else:
-            mpc_osqp_linsys_modes_f = mpc_osqp_linsys_modes
-            
-        
-        for solver_tolerance in solver_tolerances:    
-            for mpc_osqp_linsys_mode in mpc_osqp_linsys_modes_f:
-                for mpc_hpipm_mode in mpc_hpipm_modes_f:
-                    for mpc_condensed_size in mpc_condensed_sizes_f:
-                        for wbc_scene in wbc_scenes:
-                            for wbc_solver in wbc_solvers:
-                                for experiment, experiment_name, experiment_gait in zip(
-                                    [experiment_stand, experiment_trot],
-                                    ["stand_exp", "trot_exp"],
-                                    ["STAND", "TROT"],
-                                ):
-                                    for iteration in range(max_trials):
-                                        target_bag = (
-                                            mpc_solver
-                                            + "-"
-                                            + mpc_hpipm_mode
-                                            + "-"
-                                            + str(mpc_condensed_size)
-                                            + "-"
-                                            + experiment_name
-                                            + "-"
-                                            + str(iteration)
-                                            + "-"
-                                            + wbc_solver
-                                            + "-"
-                                            + wbc_scene
-                                            + "-"
-                                            + mpc_osqp_linsys_mode
-                                            + "-"
-                                            + str(solver_tolerance)
-                                        )
-                                        
-                                        success = solver_experiments_node.run_experiment(
-                                            mpc_solver,
-                                            mpc_hpipm_mode,
-                                            mpc_condensed_size,
-                                            wbc_solver,
-                                            wbc_scene,
-                                            mpc_osqp_linsys_mode,
-                                            solver_tolerance,
-                                            experiment_gait,
-                                            experiment,
-                                            target_bag
-                                        )
-                                        if success:
-                                            print("Experiment successful no more trials")
-                                            break
-                                        else:
-                                            print(
-                                                "Experiment failed -> if more trials available try again"
-                                            )
+    for mpc_solver in (
+        "PARTIAL_CONDENSING_DAOCP",
+        "PARTIAL_CONDENSING_HPIPM",
+        "FULL_CONDENSING_DAQP",
+        "FULL_CONDENSING_QPOASES",
+    ):
+        condensed_size = horizon if mpc_solver.startswith("PARTIAL") else 1
+        hpipm_mode = "SPEED_ABS" if "HPIPM" in mpc_solver else "xxxxx"
+        for experiment, experiment_name, experiment_gait in experiment_cases:
+            target_bag = (
+                f"{mpc_solver}-{hpipm_mode}-{condensed_size}-{experiment_name}-0-"
+                "EiquadprogSolver-AccelerationSceneReducedTSID-xxxxx-0.001"
+            )
+            solver_experiments_node.run_experiment(
+                mpc_solver, hpipm_mode, condensed_size,
+                "EiquadprogSolver", "AccelerationSceneReducedTSID", "qdldl",
+                0.001, experiment_gait,
+                experiment, target_bag,
+            )
     print("STOP --->")
     solver_experiments_node.STOP()
     print("<-----")
@@ -738,6 +658,8 @@ def main(args=None):
     print("<----- runner stopped")
     solver_experiments_node.destroy_node()
     print("All experiments finished! - Bye...")
+    if solver_experiments_node.failed_experiments:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

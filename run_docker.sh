@@ -2,14 +2,14 @@
 
 touch -a /home/$USER/.ros_docker_bash_history
 
-# check, if a container with dfki_quad label is already there
-container_id=$(docker ps -aq --filter "label=dfki_quad")
+# check, if a container with dfki_quad_daocp label is already there
+container_id=$(docker ps -aq --filter "label=dfki_quad_daocp")
 
 if [[ $container_id = "" ]]; then
     # start new container if there is none
     xhost +local:
     docker_options=(-it \
-        --label="dfki_quad" \
+        --label="dfki_quad_daocp" \
         --net="host" \
         --env="DISPLAY" \
         --env="QT_X11_NO_MITSHM=1" \
@@ -28,10 +28,10 @@ if [[ $container_id = "" ]]; then
 	docker_options+=(--mount type=bind,source=/sys/class/powercap,target=/sys/class/powercap)
     fi
 
-    docker run "${docker_options[@]}" dfki_quad:latest
+    docker run "${docker_options[@]}" dfki_quad_daocp:latest
 else
     # restart existing container
-    docker start -i $(docker ps -n1 -aq --filter "label=dfki_quad") 
+    docker start -i $(docker ps -n1 -aq --filter "label=dfki_quad_daocp")
 fi
 
 exit 0

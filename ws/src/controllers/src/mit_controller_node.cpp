@@ -57,7 +57,7 @@ MITController::MITController(const std::string &nodeName)
   this->declare_parameter("controller_heartbeat_dt", 0.5);
   this->declare_parameter<std::vector<double>>("model_parameter_weights",
                                                {1.0, 0.7, 0.7, 0.0, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1});
-  this->declare_parameter<std::string>("mpc_solver", "PARTIAL_CONDENSING_OSQP");
+  this->declare_parameter<std::string>("mpc_solver", "PARTIAL_CONDENSING_HPIPM");
   this->declare_parameter<int>("mpc_condensed_size", MPC_PREDICTION_HORIZON);
   this->declare_parameter<std::string>("mpc_hpipm_mode", "SPEED_ABS");
   this->declare_parameter<std::string>("wbc.arc_opt.solver", "EiquadprogSolver");
@@ -503,19 +503,17 @@ MITController::MITController(const std::string &nodeName)
   }
 
   auto mpc_solver_name = this->get_parameter("mpc_solver").as_string();
-  ocp_qp_solver_t mpc_solver = PARTIAL_CONDENSING_OSQP;
+  ocp_qp_solver_t mpc_solver = PARTIAL_CONDENSING_HPIPM;
   if (mpc_solver_name == "PARTIAL_CONDENSING_HPIPM") {
     mpc_solver = PARTIAL_CONDENSING_HPIPM;
-  } else if (mpc_solver_name == "PARTIAL_CONDENSING_OSQP") {
-    mpc_solver = PARTIAL_CONDENSING_OSQP;
   } else if (mpc_solver_name == "FULL_CONDENSING_HPIPM") {
     mpc_solver = FULL_CONDENSING_HPIPM;
   } else if (mpc_solver_name == "FULL_CONDENSING_DAQP") {
     mpc_solver = FULL_CONDENSING_DAQP;
   } else if (mpc_solver_name == "FULL_CONDENSING_QPOASES") {
     mpc_solver = FULL_CONDENSING_QPOASES;
-  } else if (mpc_solver_name == "PARTIAL_CONDENSING_QPDUNES") {
-    mpc_solver = PARTIAL_CONDENSING_QPDUNES;
+  } else if (mpc_solver_name == "PARTIAL_CONDENSING_DAOCP") {
+    mpc_solver = PARTIAL_CONDENSING_DAOCP;
   } else {
     RCLCPP_ERROR(this->get_logger(), "Unknown mpc solver: %s", mpc_solver_name.c_str());
     exit(-1);
@@ -854,6 +852,7 @@ void MITController::MPCLoopCallback() {
     solve_time_message.acados_total_time = solver_info.total_solver_time;
     solve_time_message.acados_num_iter = solver_info.acados_num_iter;
     solve_time_message.acados_t_computed = solver_info.acados_t_computed;
+    solve_time_message.acados_return = solver_info.return_code;
     solve_time_message.qp_objective_value = solver_info.qp_objective_value;
     solve_time_message.qp_residuals[0] = solver_info.qp_residuals[0];
     solve_time_message.qp_residuals[1] = solver_info.qp_residuals[1];
@@ -920,8 +919,9 @@ void MITController::MPCLoopCallback() {
   }
 
   if (open_loop_publisher_ != nullptr) {
-    assert(MPC_PREDICTION_HORIZON == 20);  // fixed message size
     static interfaces::msg::PositionSequence open_loop_positions;
+    static_assert(MPC_PREDICTION_HORIZON <= 20, "PositionSequence capacity is too small");
+    open_loop_positions.valid.fill(false);
     for (unsigned int ol_idx = 0; ol_idx < MPC_PREDICTION_HORIZON; ol_idx++) {
       open_loop_positions.valid[ol_idx] = true;
       open_loop_positions.x[ol_idx] = mpc_prediction_.position[ol_idx].x();

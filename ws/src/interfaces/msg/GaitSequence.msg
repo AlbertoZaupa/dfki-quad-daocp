@@ -5,6 +5,7 @@ float32[4] target_orientation
 float32[3] target_twist
 float32 target_height
 float32 current_height
+uint32 sequence_size
 
 bool[21] contact_sequence_0
 bool[21] contact_sequence_1

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <Eigen/Dense>
 #include <iostream>
 #include <vector>
@@ -27,8 +28,8 @@
 #include "interfaces/msg/wbc_target.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-#define GS_SIZE 21
-#define OPEN_LOOP_SIZE 20
+static constexpr int GS_CAPACITY = 21;
+static constexpr int OPEN_LOOP_CAPACITY = 20;
 
 using namespace std::chrono_literals;
 using namespace drake;
@@ -259,26 +260,27 @@ class DrakeVisualizer : public rclcpp::Node {
         break;
     }
 
-    foot_step_plan_viz_->updateNumberOfPositions(4 * GS_SIZE);
+    const int gait_sequence_size = std::min<int>(gait_sequence_msg_.sequence_size, GS_CAPACITY);
+    foot_step_plan_viz_->updateNumberOfPositions(4 * gait_sequence_size);
     static std::vector<bool> foot_step_viz;
     static std::vector<Eigen::Vector3d> foot_steps;
-    foot_step_viz.resize(4 * GS_SIZE);
-    foot_steps.resize(4 * GS_SIZE);
-    for (int i = 0; i < GS_SIZE; i++) {
-      foot_step_viz[0 * GS_SIZE + i] = gait_sequence_msg_.contact_sequence_0[i];
-      foot_step_viz[1 * GS_SIZE + i] = gait_sequence_msg_.contact_sequence_1[i];
-      foot_step_viz[2 * GS_SIZE + i] = gait_sequence_msg_.contact_sequence_2[i];
-      foot_step_viz[3 * GS_SIZE + i] = gait_sequence_msg_.contact_sequence_3[i];
-      foot_steps[0 * GS_SIZE + i] = {gait_sequence_msg_.foot_position_sequence_x_0[i],
+    foot_step_viz.resize(4 * gait_sequence_size);
+    foot_steps.resize(4 * gait_sequence_size);
+    for (int i = 0; i < gait_sequence_size; i++) {
+      foot_step_viz[0 * gait_sequence_size + i] = gait_sequence_msg_.contact_sequence_0[i];
+      foot_step_viz[1 * gait_sequence_size + i] = gait_sequence_msg_.contact_sequence_1[i];
+      foot_step_viz[2 * gait_sequence_size + i] = gait_sequence_msg_.contact_sequence_2[i];
+      foot_step_viz[3 * gait_sequence_size + i] = gait_sequence_msg_.contact_sequence_3[i];
+      foot_steps[0 * gait_sequence_size + i] = {gait_sequence_msg_.foot_position_sequence_x_0[i],
                                      gait_sequence_msg_.foot_position_sequence_y_0[i],
                                      gait_sequence_msg_.foot_position_sequence_z_0[i]};
-      foot_steps[1 * GS_SIZE + i] = {gait_sequence_msg_.foot_position_sequence_x_1[i],
+      foot_steps[1 * gait_sequence_size + i] = {gait_sequence_msg_.foot_position_sequence_x_1[i],
                                      gait_sequence_msg_.foot_position_sequence_y_1[i],
                                      gait_sequence_msg_.foot_position_sequence_z_1[i]};
-      foot_steps[2 * GS_SIZE + i] = {gait_sequence_msg_.foot_position_sequence_x_2[i],
+      foot_steps[2 * gait_sequence_size + i] = {gait_sequence_msg_.foot_position_sequence_x_2[i],
                                      gait_sequence_msg_.foot_position_sequence_y_2[i],
                                      gait_sequence_msg_.foot_position_sequence_z_2[i]};
-      foot_steps[3 * GS_SIZE + i] = {gait_sequence_msg_.foot_position_sequence_x_3[i],
+      foot_steps[3 * gait_sequence_size + i] = {gait_sequence_msg_.foot_position_sequence_x_3[i],
                                      gait_sequence_msg_.foot_position_sequence_y_3[i],
                                      gait_sequence_msg_.foot_position_sequence_z_3[i]};
     }
@@ -303,15 +305,15 @@ class DrakeVisualizer : public rclcpp::Node {
     swing_leg_traj_viz_->get_vectors_origin_input_port().FixValue(
         &swing_leg_traj_viz_->GetMyMutableContextFromRoot(context_.get()), swing_leg_vector_origins);
 
-    open_loop_trajectory_viz_->updateNumberOfPositions(OPEN_LOOP_SIZE);
-    open_loop_poses_viz_->updateNumberOfPoses(OPEN_LOOP_SIZE);
+    open_loop_trajectory_viz_->updateNumberOfPositions(OPEN_LOOP_CAPACITY);
+    open_loop_poses_viz_->updateNumberOfPoses(OPEN_LOOP_CAPACITY);
     static std::vector<bool> open_loop_position_viz;
     static std::vector<Eigen::Vector3d> open_loop_positions;
     static std::vector<drake::math::RigidTransformd> open_loop_poses;
-    open_loop_position_viz.resize(OPEN_LOOP_SIZE);
-    open_loop_positions.resize(OPEN_LOOP_SIZE);
-    open_loop_poses.resize(OPEN_LOOP_SIZE);
-    for (int i = 0; i < OPEN_LOOP_SIZE; i++) {
+    open_loop_position_viz.resize(OPEN_LOOP_CAPACITY);
+    open_loop_positions.resize(OPEN_LOOP_CAPACITY);
+    open_loop_poses.resize(OPEN_LOOP_CAPACITY);
+    for (int i = 0; i < OPEN_LOOP_CAPACITY; i++) {
       open_loop_position_viz[i] = open_loop_trajectory_msg_.valid[i];
       open_loop_positions[i] = {
           open_loop_trajectory_msg_.x[i], open_loop_trajectory_msg_.y[i], open_loop_trajectory_msg_.z[i]};
@@ -332,12 +334,12 @@ class DrakeVisualizer : public rclcpp::Node {
         &open_loop_trajectory_viz_->GetMyMutableContextFromRoot(context_.get()), open_loop_positions);
     open_loop_poses_viz_->get_poses_input_port().FixValue(
         &open_loop_poses_viz_->GetMyMutableContextFromRoot(context_.get()), open_loop_poses);
-    target_trajectory_viz_->updateNumberOfPositions(GS_SIZE);
+    target_trajectory_viz_->updateNumberOfPositions(gait_sequence_size);
     static std::vector<bool> target_position_viz;
     static std::vector<Eigen::Vector3d> target_positions;
-    target_position_viz.resize(GS_SIZE);
-    target_positions.resize(GS_SIZE);
-    for (int i = 0; i < GS_SIZE; i++) {
+    target_position_viz.resize(gait_sequence_size);
+    target_positions.resize(gait_sequence_size);
+    for (int i = 0; i < gait_sequence_size; i++) {
       target_position_viz[i] = true;
       target_positions[i] = {gait_sequence_msg_.reference_trajectory_position_x[i],
                              gait_sequence_msg_.reference_trajectory_position_y[i],

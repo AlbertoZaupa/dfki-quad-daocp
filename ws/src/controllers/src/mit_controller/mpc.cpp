@@ -3,6 +3,7 @@
 #include <blasfeo.h>
 
 #include <iostream>
+#include <numeric>
 
 #include "acados/ocp_qp/ocp_qp_full_condensing.h"
 #include "acados/utils/print.h"
@@ -185,8 +186,6 @@ MPC::MPC(double alpha,
   int ncb = NUM_POLY_CONST_PER_FOOT * NUM_FEET;
   int nbu = NUM_FEET * 3;  // Limit all forces
   int zero = 0;
-  // inital value constraint for x
-  ocp_qp_dims_set(solver_config_, ocp_dims_, 0, "nbx", &nx);
   for (int k = 0; k <= PREDICTION_HORIZON; k++) {
     // State size
     ocp_qp_dims_set(solver_config_, ocp_dims_, k, "nx", &nx);
@@ -195,6 +194,12 @@ MPC::MPC(double alpha,
     // Input constraints
     ocp_qp_dims_set(solver_config_, ocp_dims_, k, "ng", &ncb);
     ocp_qp_dims_set(solver_config_, ocp_dims_, k, "nbu", &nbu);
+  }
+  // Initial-state box constraints. DA-OCP additionally needs these bounds
+  // explicitly marked as equality constraints (nbxe), not merely lbx == ubx.
+  ocp_qp_dims_set(solver_config_, ocp_dims_, 0, "nbx", &nx);
+  if (solver == PARTIAL_CONDENSING_DAOCP) {
+    ocp_qp_dims_set(solver_config_, ocp_dims_, 0, "nbxe", &nx);
   }
 
   // last stage has no controls
@@ -215,6 +220,11 @@ MPC::MPC(double alpha,
   }
   ocp_qp_in_set(solver_config_, qp_in_, PREDICTION_HORIZON, const_cast<char *>("Q"), Q_.data());
   ocp_qp_in_set(solver_config_, qp_in_, 0, const_cast<char *>("Jbx"), stateIdentity_.data());
+  if (solver == PARTIAL_CONDENSING_DAOCP) {
+    std::array<int, STATE_SIZE> initial_state_bound_indices;
+    std::iota(initial_state_bound_indices.begin(), initial_state_bound_indices.end(), 0);
+    ocp_qp_in_set(solver_config_, qp_in_, 0, const_cast<char *>("idxbxe"), initial_state_bound_indices.data());
+  }
 
   // create solver
   solver_dims_ = ocp_qp_xcond_solver_dims_create_from_ocp_qp_dims(solver_config_, ocp_dims_);
@@ -236,6 +246,7 @@ MPC::MPC(double alpha,
                                  "hpipm_mode",
                                  (void *)hpipm_mode.c_str());
   }
+#ifdef ACADOS_WITH_OSQP
   if (solver == PARTIAL_CONDENSING_OSQP) {
     std::cout << "Set osqp linear system solver to " << osqp_linsys_solver.c_str() << std::endl;
     ocp_qp_xcond_solver_opts_set(solver_config_,
@@ -248,13 +259,32 @@ MPC::MPC(double alpha,
                                   "osqp_polish",
                                   &polish);                  
   }
+#else
+  (void)osqp_linsys_solver;
+#endif
+  if (solver == PARTIAL_CONDENSING_DAOCP) {
+    int daocp_selection_strategy = 1;  // MOST_VIOLATED
+    ocp_qp_xcond_solver_opts_set(solver_config_,
+                                 reinterpret_cast<ocp_qp_xcond_solver_opts *>(solver_opts_),
+                                 "selection_strategy",
+                                 &daocp_selection_strategy);
+  }
 
   ocp_qp_xcond_solver_opts_set(
       solver_config_, reinterpret_cast<ocp_qp_xcond_solver_opts *>(solver_opts_), "warm_start", &warm_start);
 
   // Set all tolerances
-  if (solver_tolerances > 0.0) {
+  if (solver == PARTIAL_CONDENSING_DAOCP && solver_tolerances > 0.0) {
+    // DAOCP exposes a primal feasibility tolerance through tol_ineq.
+    ocp_qp_xcond_solver_opts_set(
+        solver_config_, reinterpret_cast<ocp_qp_xcond_solver_opts *>(solver_opts_), "tol_ineq", &solver_tolerances);
+  } else if (solver_tolerances > 0.0) {
     for (auto tol_name : {"tol_dual_gap", "tol_eq", "tol_stat", "tol_ineq", "tol_comp"}) {
+      if ((solver == FULL_CONDENSING_DAQP || solver == FULL_CONDENSING_QPOASES) &&
+          std::string(tol_name) == "tol_dual_gap") {
+        std::cout << "This solver does not expose tol_dual_gap; skipping that tolerance." << std::endl;
+        continue;
+      }
       std::cout << "Set tolerance " << tol_name << " to " << solver_tolerances << std::endl;
       ocp_qp_xcond_solver_opts_set(
           solver_config_, reinterpret_cast<ocp_qp_xcond_solver_opts *>(solver_opts_), tol_name, &solver_tolerances);
@@ -467,7 +497,9 @@ void MPC::GetWrenchSequence(WrenchSequence &wrench_sequence,
 #endif
 
   solver_information.return_code = acados_return;
-  solver_information.total_solver_time = reinterpret_cast<qp_info *>(qp_out_->misc)->total_time;
+  // Use the public acados accessor for the complete QP-level time_tot. This is
+  // the timer around ocp_qp_solve (condensing, backend solve, and expansion).
+  ocp_qp_xcond_solver_get_scalar(qp_solver_, qp_out_, "time_tot", &solver_information.total_solver_time);
   solver_information.acados_solve_QP_time = reinterpret_cast<qp_info *>(qp_out_->misc)->solve_QP_time;
   solver_information.acados_condensing_time = reinterpret_cast<qp_info *>(qp_out_->misc)->condensing_time;
   solver_information.acados_interface_time = reinterpret_cast<qp_info *>(qp_out_->misc)->interface_time;

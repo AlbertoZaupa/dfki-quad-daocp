@@ -97,8 +97,8 @@ def generate_launch_description():
         mpc_solver_param = ['-p', 'mpc_solver:=PARTIAL_CONDENSING_HPIPM']
     elif "mpc_solver:=FULL_CONDENSING_HPIPM" in sys.argv[4:]:
         mpc_solver_param = ['-p', 'mpc_solver:=FULL_CONDENSING_HPIPM']
-    elif "mpc_solver:=PARTIAL_CONDENSING_OSQP" in sys.argv[4:]:
-        mpc_solver_param = ['-p', 'mpc_solver:=PARTIAL_CONDENSING_OSQP']
+    elif "mpc_solver:=PARTIAL_CONDENSING_DAOCP" in sys.argv[4:]:
+        mpc_solver_param = ['-p', 'mpc_solver:=PARTIAL_CONDENSING_DAOCP']
     elif "mpc_solver:=FULL_CONDENSING_QPOASES" in sys.argv[4:]:
         mpc_solver_param = ['-p', 'mpc_solver:=FULL_CONDENSING_QPOASES']
     else:

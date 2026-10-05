@@ -1,0 +1,32 @@
+diff --git a/acados/ocp_qp/ocp_qp_hpipm.c b/acados/ocp_qp/ocp_qp_hpipm.c
+index 9e0b922e2..1f4db4fe5 100644
+--- a/acados/ocp_qp/ocp_qp_hpipm.c
++++ b/acados/ocp_qp/ocp_qp_hpipm.c
+@@ -302,15 +302,19 @@ int ocp_qp_hpipm(void *config_, void *qp_in_, void *qp_out_, void *opts_, void *
+     ocp_qp_hpipm_opts *opts = opts_;
+     ocp_qp_hpipm_memory *mem = mem_;
+ 
+-    // zero primal solution
+-    int ii;
+-    int N = qp_in->dim->N;
+-    int *nx = qp_in->dim->nx;
+-    int *nu = qp_in->dim->nu;
+-    int *ns = qp_in->dim->ns;
+-    for(ii=0; ii<=N; ii++)
++    // Preserve the previous primal solution when warm starting is enabled.
++    if (opts->hpipm_opts->warm_start == 0)
+     {
+-        blasfeo_dvecse(nu[ii]+nx[ii]+2*ns[ii], 0.0, qp_out->ux+ii, 0);
++        // zero primal solution
++        int ii;
++        int N = qp_in->dim->N;
++        int *nx = qp_in->dim->nx;
++        int *nu = qp_in->dim->nu;
++        int *ns = qp_in->dim->ns;
++        for(ii=0; ii<=N; ii++)
++        {
++            blasfeo_dvecse(nu[ii]+nx[ii]+2*ns[ii], 0.0, qp_out->ux+ii, 0);
++        }
+     }
+ 
+     if (opts->m_relax)

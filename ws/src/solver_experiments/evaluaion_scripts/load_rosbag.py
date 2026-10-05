@@ -1,6 +1,5 @@
 from rosbags.rosbag2.reader import Reader
-from rosbags.serde import deserialize_cdr
-from rosbags.typesys import get_types_from_msg, register_types
+from rosbags.typesys import Stores, get_typestore, get_types_from_msg
 
 import pandas as pd
 import numpy as np
@@ -12,19 +11,23 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def register_custom_message_types():
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
     interfaces_root = get_package_share_directory("interfaces")
+    custom_types = {}
     for path in glob.glob(f"{interfaces_root}/msg/*.msg"):
         msg_def = Path(path).read_text(encoding="utf-8")
         print(f"register custom message: {msg_def}")
-        register_types(get_types_from_msg(msg_def, "interfaces/msg/" + Path(path).stem))
+        custom_types.update(get_types_from_msg(msg_def, "interfaces/msg/" + Path(path).stem))
+    typestore.register(custom_types)
+    return typestore
 
 
 def load_bag(path: str):
-    register_custom_message_types()
+    typestore = register_custom_message_types()
     bag_data = {"solve_time": [], "wbc_solve_time": [], "cpu_power_consumption": []}
     with Reader(path) as reader:
         for connection, timestamp, rawdata in reader.messages():
-            msg = deserialize_cdr(rawdata, connection.msgtype)
+            msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
 
         df_st = pd.DataFrame(columns_st)
         df_p = pd.DataFrame(columns_power)

@@ -3,7 +3,11 @@
 static constexpr int N_LEGS = 4;
 static constexpr int N_JOINTS_PER_LEG = 3;
 static constexpr int GAIT_SEQUENCE_SIZE = 100;
-static constexpr int MPC_PREDICTION_HORIZON = 20;
+#ifndef MPC_PREDICTION_HORIZON
+#define MPC_PREDICTION_HORIZON 20
+#endif
+static_assert(MPC_PREDICTION_HORIZON >= 10 && MPC_PREDICTION_HORIZON <= 20,
+              "Supported MPC horizons are integers from N=10 through N=20");
 static constexpr double MPC_DT = 0.05;
 static constexpr double MPC_CONTROL_DT = 0.01;
 static constexpr double SWING_LEG_DT = 0.002;

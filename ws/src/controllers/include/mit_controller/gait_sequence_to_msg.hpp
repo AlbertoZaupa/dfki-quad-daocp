@@ -5,11 +5,11 @@
 #include "mit_controller/mit_controller_params.hpp"
 
 interfaces::msg::GaitSequence gait_sequence_to_msg(const GaitSequence& sequence) {
-  static const int size = 21;  // size from message definition
-  assert(MPC_PREDICTION_HORIZON + 1 <= size);
+  static constexpr int size = MPC_PREDICTION_HORIZON + 1;
   assert(GAIT_SEQUENCE_SIZE >= size);
   interfaces::msg::GaitSequence msg;
-  assert(msg.contact_sequence_0.size() == size);
+  assert(msg.contact_sequence_0.size() >= size);
+  msg.sequence_size = size;
   msg.target_position[0] = sequence.target_position.x();
   msg.target_position[1] = sequence.target_position.y();
   msg.target_position[2] = sequence.target_position.z();

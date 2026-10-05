@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.8)
 project(controllers)
 
+set(MPC_PREDICTION_HORIZON 20 CACHE STRING "Number of MPC shooting intervals")
+if (NOT MPC_PREDICTION_HORIZON MATCHES "^(1[0-9]|20)$")
+    message(FATAL_ERROR "MPC_PREDICTION_HORIZON must be an integer from 10 through 20")
+endif ()
+add_compile_definitions(MPC_PREDICTION_HORIZON=${MPC_PREDICTION_HORIZON})
+message(STATUS "Building controllers with MPC horizon N=${MPC_PREDICTION_HORIZON}")
+
 option(ON_PI "On Raspberry Pi" FALSE)
 if (ON_PI)
     message(WARNING "Skipping package on Raspberry Pi.")

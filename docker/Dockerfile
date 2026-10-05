@@ -1,5 +1,10 @@
 FROM ros:humble-ros-base-jammy
 
+ARG ACADOS_COMMIT=9dfbd39a8d0aa990cac5dcc1e9973f8a0d59feec
+ARG DAOCP_COMMIT=a836ab4ba8efa06641b2457e4d0799cf659ef911
+LABEL org.opencontainers.image.acados.revision=${ACADOS_COMMIT} \
+      org.opencontainers.image.daocp.revision=${DAOCP_COMMIT}
+
 # basic tooling & packages needed
 RUN apt-get update && apt-get upgrade -y
 RUN apt-get install -y \
@@ -69,13 +74,23 @@ RUN make install
 # add to ld library path the inkef install dixr
 ENV LD_LIBRARY_PATH /usr/local/lib:${LD_LIBRARY_PATH}
 
-# add adapted acados library and install it
+# Download the pinned acados fork and DAOCP inside the image.
 WORKDIR /root
- # to autmatically detect updates
-ADD https://api.github.com/repos/FranekStark/acados/commits/comparison_paper acados_version.json
-RUN git clone --branch comparison_paper https://github.com/FranekStark/acados && cd acados && git submodule update --recursive --init && mkdir build
+RUN git clone https://github.com/AlbertoZaupa/acados.git && \
+    cd acados && git checkout "${ACADOS_COMMIT}" && \
+    git -c submodule.external/daocp.url=https://github.com/AlbertoZaupa/daocp.git \
+        submodule update --init external/blasfeo external/hpipm external/qpoases external/daqp external/daocp && \
+    git -C external/daocp fetch origin "${DAOCP_COMMIT}" && \
+    git -C external/daocp checkout "${DAOCP_COMMIT}"
+COPY patches/acados-benchmark.patch /tmp/acados-benchmark.patch
+RUN cd /root/acados && git apply --check /tmp/acados-benchmark.patch && \
+    git apply /tmp/acados-benchmark.patch
 WORKDIR /root/acados/build
-RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DACADOS_WITH_QPOASES=ON -DACADOS_WITH_OSQP=ON -DACADOS_WITH_QPDUNES=ON -DACADOS_WITH_DAQP=ON -DACADOS_INSTALL_DIR=/opt/acados -DACADOS_EXAMPLES=OFF && make install
+RUN cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DACADOS_WITH_QPOASES=ON -DACADOS_WITH_DAQP=ON -DACADOS_WITH_DAOCP=ON \
+    -DACADOS_WITH_OSQP=OFF -DACADOS_WITH_QPDUNES=OFF \
+    -DACADOS_INSTALL_DIR=/opt/acados -DACADOS_EXAMPLES=OFF && \
+    make -j$(nproc) install
 ENV LD_LIBRARY_PATH /opt/acados/lib:${LD_LIBRARY_PATH}
 ENV ACADOS_SOURCE_DIR "/root/acados"
 
@@ -142,7 +157,8 @@ RUN git clone --branch v0.6.7 --recurse-submodules https://github.com/Simple-Rob
 RUN git clone https://github.com/osqp/osqp.git && cd osqp && git checkout release-0.6.3 && git submodule update --recursive --init &&  mkdir build && cd build && cmake -G "Unix Makefiles" .. -DCMAKE_BUILD_TYPE=Release && cmake --build . --target install
 RUN git clone https://github.com/robotology/osqp-eigen.git && cd osqp-eigen && git checkout 85c3762 && git submodule update --recursive --init && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) && make install
 
-RUN mkdir wbc/build && cd wbc/build && cmake .. -DROBOT_MODEL_RBDL=OFF -DROBOT_MODEL_KDL=OFF -DSOLVER_PROXQP=ON -DSOLVER_EIQUADPROG=ON -DSOLVER_QPSWIFT=ON -DSOLVER_OSQP=ON -DSOLVER_HPIPM=ON -DCMAKE_BUILD_TYPE=RELEASE && make -j$(nproc) && make install
+RUN sed -i '/dims\.nsb = 0;/d; /dims\.nsg = 0;/d; /^[[:space:]]*qp_in);/i\                       NULL,' wbc/src/solvers/hpipm/HPIPMSolver.cpp && \
+    mkdir wbc/build && cd wbc/build && cmake .. -DROBOT_MODEL_RBDL=OFF -DROBOT_MODEL_KDL=OFF -DSOLVER_PROXQP=ON -DSOLVER_EIQUADPROG=ON -DSOLVER_QPSWIFT=ON -DSOLVER_OSQP=ON -DSOLVER_HPIPM=ON -DCMAKE_BUILD_TYPE=RELEASE && make -j$(nproc) && make install
 RUN ldconfig
 
 # Install NMEA GPS driver
